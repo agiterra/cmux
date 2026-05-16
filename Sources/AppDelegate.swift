@@ -777,9 +777,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
     private var didSetupTerminalCmdClickUITest = false
     private var didSetupGotoSplitUITest = false
     private var didSetupBonsplitTabDragUITest = false
+    private var didSetupSidebarRowHeightNotificationUITest = false
+    private var didDeliverSidebarRowHeightNotificationUITest = false
     private var terminalCmdClickUITestPoller: DispatchSourceTimer?
     private var bonsplitTabDragUITestRecorder: DispatchSourceTimer?
     private var gotoSplitUITestRecorder: DispatchSourceTimer?
+    private var sidebarRowHeightNotificationUITestSource: DispatchSourceFileSystemObject?
     private var gotoSplitUITestObservers: [NSObjectProtocol] = []
     private var didSetupMultiWindowNotificationsUITest = false
     private var didSetupDisplayResolutionUITestDiagnostics = false
@@ -1601,6 +1604,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         setupTerminalCmdClickUITestIfNeeded()
         setupGotoSplitUITestIfNeeded()
         setupBonsplitTabDragUITestIfNeeded()
+        setupSidebarRowHeightNotificationUITestIfNeeded()
         setupMultiWindowNotificationsUITestIfNeeded()
         setupDisplayResolutionUITestDiagnosticsIfNeeded()
         setupPortalStatsUITestDiagnosticsIfNeeded()
@@ -10070,6 +10074,85 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
     }
 
     private func loadGotoSplitTestData(at path: String) -> [String: String] {
+        guard let data = try? Data(contentsOf: URL(fileURLWithPath: path)),
+              let object = try? JSONSerialization.jsonObject(with: data) as? [String: String] else {
+            return [:]
+        }
+        return object
+    }
+
+    private func setupSidebarRowHeightNotificationUITestIfNeeded() {
+        guard !didSetupSidebarRowHeightNotificationUITest else { return }
+        didSetupSidebarRowHeightNotificationUITest = true
+
+        let env = ProcessInfo.processInfo.environment
+        guard env["CMUX_UI_TEST_SIDEBAR_ROW_HEIGHT_NOTIFICATION_SETUP"] == "1" else { return }
+        guard let triggerPath = env["CMUX_UI_TEST_SIDEBAR_ROW_HEIGHT_NOTIFICATION_TRIGGER_PATH"],
+              !triggerPath.isEmpty,
+              let statePath = env["CMUX_UI_TEST_SIDEBAR_ROW_HEIGHT_NOTIFICATION_STATE_PATH"],
+              !statePath.isEmpty else {
+            return
+        }
+
+        FileManager.default.createFile(atPath: triggerPath, contents: Data(), attributes: nil)
+        let fd = open(triggerPath, O_EVTONLY)
+        guard fd >= 0 else {
+            writeSidebarRowHeightNotificationUITestState(["ready": "0", "error": "open_failed"], at: statePath)
+            return
+        }
+
+        let source = DispatchSource.makeFileSystemObjectSource(
+            fileDescriptor: fd,
+            eventMask: [.write, .extend, .attrib],
+            queue: .main
+        )
+        source.setEventHandler { [weak self] in
+            self?.deliverSidebarRowHeightNotificationUITestIfNeeded(statePath: statePath)
+        }
+        source.setCancelHandler {
+            close(fd)
+        }
+        sidebarRowHeightNotificationUITestSource = source
+        source.resume()
+        writeSidebarRowHeightNotificationUITestState(["ready": "1"], at: statePath)
+    }
+
+    private func deliverSidebarRowHeightNotificationUITestIfNeeded(statePath: String) {
+        guard !didDeliverSidebarRowHeightNotificationUITest else { return }
+        didDeliverSidebarRowHeightNotificationUITest = true
+        guard let tabManager,
+              let notificationStore,
+              let tabId = tabManager.selectedTabId ?? tabManager.tabs.first?.id else {
+            writeSidebarRowHeightNotificationUITestState(["notified": "0", "error": "workspace_missing"], at: statePath)
+            return
+        }
+
+        let previousFocusOverride = AppFocusState.overrideIsFocused
+        AppFocusState.overrideIsFocused = false
+        notificationStore.addNotification(
+            tabId: tabId,
+            surfaceId: nil,
+            title: "sidebar-height-ui-test",
+            subtitle: "ui-test",
+            body: "compact row height"
+        )
+        AppFocusState.overrideIsFocused = previousFocusOverride
+        writeSidebarRowHeightNotificationUITestState([
+            "notified": "1",
+            "tabId": tabId.uuidString,
+        ], at: statePath)
+    }
+
+    private func writeSidebarRowHeightNotificationUITestState(_ updates: [String: String], at path: String) {
+        var payload = loadSidebarRowHeightNotificationUITestState(at: path)
+        for (key, value) in updates {
+            payload[key] = value
+        }
+        guard let data = try? JSONSerialization.data(withJSONObject: payload) else { return }
+        try? data.write(to: URL(fileURLWithPath: path), options: .atomic)
+    }
+
+    private func loadSidebarRowHeightNotificationUITestState(at path: String) -> [String: String] {
         guard let data = try? Data(contentsOf: URL(fileURLWithPath: path)),
               let object = try? JSONSerialization.jsonObject(with: data) as? [String: String] else {
             return [:]

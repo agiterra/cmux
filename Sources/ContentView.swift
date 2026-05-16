@@ -12235,6 +12235,69 @@ enum SidebarTrailingAccessoryWidthPolicy {
     static let closeButtonWidth: CGFloat = 16
 }
 
+#if DEBUG
+private enum SidebarWorkspaceRowHeightUITestProbe {
+    static func publish(workspaceId: UUID, index: Int, count: Int, height: CGFloat, unreadCount: Int) {
+        guard index == 0 else { return }
+        let env = ProcessInfo.processInfo.environment
+        guard env["CMUX_UI_TEST_SIDEBAR_ROW_HEIGHT_PROBE"] == "1",
+              let path = env["CMUX_UI_TEST_SIDEBAR_ROW_HEIGHT_PROBE_PATH"],
+              !path.isEmpty else {
+            return
+        }
+        let payload: [String: Any] = [
+            "workspaceId": workspaceId.uuidString,
+            "index": index + 1,
+            "count": count,
+            "height": Double(height),
+            "unreadCount": unreadCount,
+            "publishedAt": Date().timeIntervalSince1970,
+        ]
+        guard let data = try? JSONSerialization.data(withJSONObject: payload) else { return }
+        try? data.write(to: URL(fileURLWithPath: path), options: .atomic)
+    }
+}
+#endif
+
+private struct SidebarWorkspaceRowHeightMeasurement: View {
+    let workspaceId: UUID
+    let index: Int
+    let count: Int
+    let unreadCount: Int
+    let onHeightChange: (CGFloat) -> Void
+
+    var body: some View {
+        GeometryReader { proxy in
+            Color.clear
+                .onAppear {
+                    publish(height: proxy.size.height, unreadCount: unreadCount)
+                }
+                .onChange(of: proxy.size.height) { newHeight in
+                    publish(height: newHeight, unreadCount: unreadCount)
+                }
+#if DEBUG
+                .onChange(of: unreadCount) { newUnreadCount in
+                    publish(height: proxy.size.height, unreadCount: newUnreadCount)
+                }
+#endif
+        }
+    }
+
+    private func publish(height rawHeight: CGFloat, unreadCount: Int) {
+        let height = max(rawHeight, 1)
+        onHeightChange(height)
+#if DEBUG
+        SidebarWorkspaceRowHeightUITestProbe.publish(
+            workspaceId: workspaceId,
+            index: index,
+            count: count,
+            height: height,
+            unreadCount: unreadCount
+        )
+#endif
+    }
+}
+
 // PERF: TabItemView is Equatable so SwiftUI skips body re-evaluation when
 // the parent rebuilds with unchanged values. Without this, every TabManager
 // or NotificationStore publish causes ALL tab items to re-evaluate (~18% of
@@ -12885,14 +12948,13 @@ private struct TabItemView: View, Equatable {
         .shortcutHintVisibilityAnimation(value: showsWorkspaceShortcutHint)
         .padding(.horizontal, 6)
         .background {
-            GeometryReader { proxy in
-                Color.clear
-                    .onAppear {
-                        rowHeight = max(proxy.size.height, 1)
-                    }
-                    .onChange(of: proxy.size.height) { newHeight in
-                        rowHeight = max(newHeight, 1)
-                    }
+            SidebarWorkspaceRowHeightMeasurement(
+                workspaceId: tab.id,
+                index: index,
+                count: accessibilityWorkspaceCount,
+                unreadCount: unreadCount
+            ) { height in
+                rowHeight = height
             }
         }
         .contentShape(Rectangle())

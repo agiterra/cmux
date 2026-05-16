@@ -1,12 +1,40 @@
+import Foundation
 import XCTest
 
 final class WorkspaceSidebarScrollUITests: XCTestCase {
     private let topTitlebarWorkspaceClearance: CGFloat = 32
     private let maxSidebarOverflowWorkspaceCount = 80
+    private var notificationTriggerPath = ""
+    private var notificationStatePath = ""
+    private var rowHeightProbePath = ""
+    private var temporaryDirectoryPath = ""
+    private var launchTag = ""
 
     override func setUp() {
         super.setUp()
         continueAfterFailure = false
+        let token = UUID().uuidString
+        let temporaryDirectory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("cmux-ui-test-sidebar-height-\(token)", isDirectory: true)
+        try? FileManager.default.createDirectory(at: temporaryDirectory, withIntermediateDirectories: true)
+        temporaryDirectoryPath = temporaryDirectory.path
+        notificationTriggerPath = temporaryDirectory.appendingPathComponent("trigger").path
+        notificationStatePath = temporaryDirectory.appendingPathComponent("state.json").path
+        rowHeightProbePath = temporaryDirectory.appendingPathComponent("row.json").path
+        launchTag = "ui-sidebar-\(UUID().uuidString.prefix(8))"
+        try? FileManager.default.removeItem(atPath: notificationTriggerPath)
+        try? FileManager.default.removeItem(atPath: notificationStatePath)
+        try? FileManager.default.removeItem(atPath: rowHeightProbePath)
+    }
+
+    override func tearDown() {
+        try? FileManager.default.removeItem(atPath: notificationTriggerPath)
+        try? FileManager.default.removeItem(atPath: notificationStatePath)
+        try? FileManager.default.removeItem(atPath: rowHeightProbePath)
+        if !temporaryDirectoryPath.isEmpty {
+            try? FileManager.default.removeItem(atPath: temporaryDirectoryPath)
+        }
+        super.tearDown()
     }
 
     func testWorkspaceSelectionKeepsSidebarRowVisible() {
@@ -110,11 +138,84 @@ final class WorkspaceSidebarScrollUITests: XCTestCase {
         )
     }
 
+    func testCompactWorkspaceRowHeightStaysStableWhenNotificationAppears() throws {
+        let app = XCUIApplication()
+        configureLaunch(app)
+        configureCompactSidebarLaunch(app)
+        configureSidebarHeightNotificationLaunch(app)
+        launchAndEnsureRunning(app)
+        XCTAssertTrue(waitForWindowCount(atLeast: 1, app: app, timeout: 8.0), "Expected a main window")
+        XCTAssertTrue(
+            waitForNotificationStateValue(key: "ready", value: "1", timeout: 8.0),
+            "Expected the sidebar row height notification test trigger to become ready"
+        )
+
+        let row = workspaceRow(index: 1, count: 1, app: app)
+        XCTAssertTrue(row.waitForExistence(timeout: 8.0), "Expected the initial workspace row")
+        let baselineHeight = row.frame.height
+        let baselineProbe = try XCTUnwrap(
+            waitForSidebarHeightProbe(unreadCount: 0, timeout: 4.0),
+            "Expected baseline row height probe data"
+        )
+        XCTAssertEqual(
+            baselineProbe.height,
+            baselineHeight,
+            accuracy: 0.25,
+            "Expected the row height probe to match the accessibility row height before notification"
+        )
+
+        try triggerSidebarHeightNotification()
+        let notificationProbe = try XCTUnwrap(
+            waitForSidebarHeightProbe(unreadCount: 1, timeout: 8.0),
+            "Expected row height probe data after notification"
+        )
+        XCTAssertTrue(
+            waitForRowHeight(row, matching: notificationProbe.height, timeout: 2.0),
+            "Expected the accessibility row height to reflect the post-notification layout"
+        )
+        XCTAssertTrue(row.exists, "Expected workspace row to remain visible after notification")
+        XCTAssertEqual(
+            notificationProbe.height,
+            baselineHeight,
+            accuracy: 0.25,
+            "Compact sidebar workspace row layout must not grow when the unread notification badge appears"
+        )
+        XCTAssertEqual(
+            row.frame.height,
+            baselineHeight,
+            accuracy: 0.25,
+            "Compact sidebar workspace rows must not grow when the unread notification badge appears"
+        )
+    }
+
     private func configureLaunch(_ app: XCUIApplication) {
         app.launchArguments += ["-newWorkspacePlacement", "end"]
         app.launchArguments += ["-AppleLanguages", "(en)", "-AppleLocale", "en_US"]
         app.launchEnvironment["CMUX_UI_TEST_MODE"] = "1"
-        app.launchEnvironment["CMUX_TAG"] = "ui-sidebar-scroll"
+        app.launchEnvironment["CMUX_TAG"] = launchTag
+    }
+
+    private func configureCompactSidebarLaunch(_ app: XCUIApplication) {
+        app.launchArguments += [
+            "-sidebarHideAllDetails", "true",
+            "-sidebarShowWorkspaceDescription", "false",
+            "-sidebarShowNotificationMessage", "false",
+            "-sidebarShowBranchDirectory", "false",
+            "-sidebarShowPullRequest", "false",
+            "-sidebarShowSSH", "false",
+            "-sidebarShowPorts", "false",
+            "-sidebarShowLog", "false",
+            "-sidebarShowProgress", "false",
+            "-sidebarShowStatusPills", "false"
+        ]
+    }
+
+    private func configureSidebarHeightNotificationLaunch(_ app: XCUIApplication) {
+        app.launchEnvironment["CMUX_UI_TEST_SIDEBAR_ROW_HEIGHT_NOTIFICATION_SETUP"] = "1"
+        app.launchEnvironment["CMUX_UI_TEST_SIDEBAR_ROW_HEIGHT_NOTIFICATION_TRIGGER_PATH"] = notificationTriggerPath
+        app.launchEnvironment["CMUX_UI_TEST_SIDEBAR_ROW_HEIGHT_NOTIFICATION_STATE_PATH"] = notificationStatePath
+        app.launchEnvironment["CMUX_UI_TEST_SIDEBAR_ROW_HEIGHT_PROBE"] = "1"
+        app.launchEnvironment["CMUX_UI_TEST_SIDEBAR_ROW_HEIGHT_PROBE_PATH"] = rowHeightProbePath
     }
 
     private func waitForWorkspaceRowHittable(
@@ -257,6 +358,69 @@ final class WorkspaceSidebarScrollUITests: XCTestCase {
             },
             "App failed to launch. state=\(app.state.rawValue)"
         )
+    }
+
+    private func triggerSidebarHeightNotification() throws {
+        try "notify\n".write(
+            to: URL(fileURLWithPath: notificationTriggerPath),
+            atomically: false,
+            encoding: .utf8
+        )
+    }
+
+    private func waitForNotificationStateValue(key: String, value: String, timeout: TimeInterval) -> Bool {
+        pollUntil(timeout: timeout) {
+            self.readStringState(at: self.notificationStatePath)?[key] == value
+        }
+    }
+
+    private func waitForSidebarHeightProbe(unreadCount: Int, timeout: TimeInterval) -> SidebarHeightProbe? {
+        var match: SidebarHeightProbe?
+        _ = pollUntil(timeout: timeout) {
+            guard let probe = self.readSidebarHeightProbe(), probe.unreadCount == unreadCount else {
+                return false
+            }
+            match = probe
+            return true
+        }
+        return match
+    }
+
+    private func waitForRowHeight(_ row: XCUIElement, matching height: CGFloat, timeout: TimeInterval) -> Bool {
+        pollUntil(timeout: timeout) {
+            row.exists && abs(row.frame.height - height) <= 0.25
+        }
+    }
+
+    private func readSidebarHeightProbe() -> SidebarHeightProbe? {
+        guard let payload = readJSONDictionary(at: rowHeightProbePath),
+              let unreadCount = payload["unreadCount"] as? Int,
+              let height = payload["height"] as? Double else {
+            return nil
+        }
+        return SidebarHeightProbe(height: CGFloat(height), unreadCount: unreadCount)
+    }
+
+    private func readStringState(at path: String) -> [String: String]? {
+        guard let payload = readJSONDictionary(at: path) else { return nil }
+        return payload.reduce(into: [String: String]()) { result, entry in
+            if let value = entry.value as? String {
+                result[entry.key] = value
+            }
+        }
+    }
+
+    private func readJSONDictionary(at path: String) -> [String: Any]? {
+        guard let data = try? Data(contentsOf: URL(fileURLWithPath: path)),
+              let payload = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+            return nil
+        }
+        return payload
+    }
+
+    private struct SidebarHeightProbe {
+        let height: CGFloat
+        let unreadCount: Int
     }
 
     private func pollUntil(
