@@ -12235,6 +12235,10 @@ enum SidebarTrailingAccessoryWidthPolicy {
     static let closeButtonWidth: CGFloat = 16
 }
 
+enum SidebarWorkspaceTitleRowMetrics {
+    static let minimumHeight: CGFloat = 16
+}
+
 #if DEBUG
 private enum SidebarWorkspaceRowHeightUITestProbe {
     static func publish(workspaceId: UUID, index: Int, count: Int, height: CGFloat, unreadCount: Int) {
@@ -12713,6 +12717,7 @@ private struct TabItemView: View, Equatable {
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .layoutPriority(1)
             }
+            .frame(minHeight: SidebarWorkspaceTitleRowMetrics.minimumHeight, alignment: .center)
 
             if let description = workspaceSnapshot.customDescription {
                 SidebarWorkspaceDescriptionText(
