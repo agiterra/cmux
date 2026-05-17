@@ -136,9 +136,6 @@ if [[ -z "$TAG" ]]; then
   )
 fi
 XCODEBUILD_ARGS+=(
-  CODE_SIGN_IDENTITY=-
-  CODE_SIGNING_REQUIRED=NO
-  CODE_SIGNING_ALLOWED=NO
 )
 XCODEBUILD_ARGS+=(build)
 
@@ -211,6 +208,8 @@ if [[ -f "$INFO_PLIST" ]]; then
     || /usr/libexec/PlistBuddy -c "Add :LSEnvironment:CMUXD_UNIX_PATH string \"${CMUXD_SOCKET}\"" "$INFO_PLIST"
   /usr/libexec/PlistBuddy -c "Set :LSEnvironment:CMUX_SOCKET_PATH \"${CMUX_SOCKET_PATH_VALUE}\"" "$INFO_PLIST" 2>/dev/null \
     || /usr/libexec/PlistBuddy -c "Add :LSEnvironment:CMUX_SOCKET_PATH string \"${CMUX_SOCKET_PATH_VALUE}\"" "$INFO_PLIST"
+  /usr/libexec/PlistBuddy -c "Set :LSEnvironment:CMUX_ALLOW_SOCKET_OVERRIDE \"1\"" "$INFO_PLIST" 2>/dev/null \
+    || /usr/libexec/PlistBuddy -c "Add :LSEnvironment:CMUX_ALLOW_SOCKET_OVERRIDE string \"1\"" "$INFO_PLIST"
   if [[ -S "$CMUXD_SOCKET" ]]; then
     for PID in $(lsof -t "$CMUXD_SOCKET" 2>/dev/null); do
       kill "$PID" 2>/dev/null || true
@@ -220,7 +219,8 @@ if [[ -f "$INFO_PLIST" ]]; then
   if [[ -S "$CMUX_SOCKET_PATH_VALUE" ]]; then
     rm -f "$CMUX_SOCKET_PATH_VALUE"
   fi
-  /usr/bin/codesign --force --sign - --timestamp=none --generate-entitlement-der "$STAGING_APP_PATH" >/dev/null 2>&1 || true
+  # re-sign after Info.plist rewrite (bundle-id rename) using a real identity so TCC has a stable Team ID
+  /usr/bin/codesign --force --deep --sign "Apple Development: Brian Sweet (94MRBDN597)" --options runtime --timestamp=none --generate-entitlement-der "$STAGING_APP_PATH" 2>&1
 fi
 APP_PATH="$STAGING_APP_PATH"
 
