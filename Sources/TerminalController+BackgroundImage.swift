@@ -108,10 +108,19 @@ extension TerminalController {
             guard let liveSurface = terminalPanel.surface.liveSurfaceForGhosttyAccess(
                 reason: "v2SurfaceSetBackground"
             ) else {
+                // AGITERRA-BG: cold surface — kick off lazy instantiation so the
+                // client's retry (e.g. crew-tools waitForPty + re-fire) lands on a
+                // live surface. Without this nudge a freshly-created split or
+                // backgrounded workspace never instantiates until the user manually
+                // focuses it, leaving themed panes blank.
+                terminalPanel.surface.requestBackgroundSurfaceStartIfNeeded()
                 result = .err(
                     code: "surface_unavailable",
                     message: Self.bgImageSurfaceUnavailable,
-                    data: ["surface_id": surfaceId.uuidString]
+                    data: [
+                        "surface_id": surfaceId.uuidString,
+                        "instantiation": "requested",
+                    ]
                 )
                 return
             }
