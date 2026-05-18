@@ -2625,6 +2625,8 @@ class TerminalController {
             return v2Result(id: id, self.v2SurfaceClearHistory(params: params))
         case "surface.trigger_flash":
             return v2Result(id: id, self.v2SurfaceTriggerFlash(params: params))
+        case "surface.set_background": // AGITERRA-BG: per-surface bg image
+            return v2Result(id: id, self.v2SurfaceSetBackground(params: params))
 
         // Panes
         case "pane.list":
@@ -3010,6 +3012,7 @@ class TerminalController {
             "surface.read_text",
             "surface.clear_history",
             "surface.trigger_flash",
+            "surface.set_background", // AGITERRA-BG: per-surface bg image
             "pane.list",
             "pane.focus",
             "pane.surfaces",
