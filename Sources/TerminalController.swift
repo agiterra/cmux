@@ -5474,7 +5474,8 @@ class TerminalController {
             "move_up", "move_down", "move_top",
             "close_others", "close_above", "close_below",
             "mark_read", "mark_unread",
-            "set_color", "clear_color"
+            "set_color", "clear_color",
+            "rebalance"  // AGITERRA-REBAL: equalize all split dividers in this workspace.
         ]
 
         var result: V2CallResult = .err(code: "invalid_params", message: "Unknown workspace action", data: [
@@ -5642,6 +5643,17 @@ class TerminalController {
             case "clear_color":
                 tabManager.setTabColor(tabId: workspace.id, color: nil)
                 finish(["color": NSNull()])
+
+            // AGITERRA-REBAL: workspace.action action=rebalance — equalize all
+            // split dividers in this workspace to 0.5 by composing the existing
+            // TabManager.equalizeSplits primitive (same one the menu / shortcut /
+            // command palette already call). No-op success when the workspace has
+            // a single pane and no splits. Returns fully_equalized=false when at
+            // least one divider rejected the mutation (rare — typically means a
+            // split id no longer exists).
+            case "rebalance":
+                let fullyEqualized = tabManager.equalizeSplits(tabId: workspace.id)
+                finish(["fully_equalized": fullyEqualized])
 
             default:
                 result = .err(code: "invalid_params", message: "Unknown workspace action", data: [
